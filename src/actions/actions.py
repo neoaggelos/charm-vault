@@ -301,6 +301,30 @@ def generate_cert(*args):
         hookenv.action_fail(str(e))
 
 
+def sign_intermediate(*args):
+    """Sign a CSR for an intermediate CA and sets it in the action output.
+
+    The CSR and the common name are provided via the action parameters from
+    the user. If the current unit is not the leader or the vault calls fail,
+    this will result in a failed command."""
+
+    if not hookenv.is_leader():
+        hookenv.action_fail('Please run action on lead unit')
+        return
+
+    action_config = hookenv.action_get()
+    try:
+        result = vault_pki.sign_intermediate(
+            common_name=action_config.get('common-name'),
+            csr=base64.b64decode(action_config.get('csr')).decode('utf-8'),
+            ttl=action_config.get('ttl'),
+            max_ttl=action_config.get('max-ttl'),
+        )
+        hookenv.action_set({'output': result})
+    except vault.VaultError as e:
+        hookenv.action_fail(str(e))
+
+
 # Actions to function mapping, to allow for illegal python action names that
 # can map to a python function.
 ACTIONS = {
@@ -319,7 +343,8 @@ ACTIONS = {
     "resume": resume,
     "restart": restart,
     "reload": reload,
-    "generate-certificate": generate_cert
+    "generate-certificate": generate_cert,
+    "sign-intermediate": sign_intermediate,
 }
 
 

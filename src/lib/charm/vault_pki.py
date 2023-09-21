@@ -147,6 +147,39 @@ def generate_certificate(cert_type, common_name, sans, ttl, max_ttl):
     return response['data']
 
 
+def sign_intermediate(common_name, csr, ttl, max_ttl):
+    """
+    Sign a CSR to create an intermediate CA.
+
+    May raise VaultNotReady if called too early, or VaultInvalidRequest if
+    something is wrong with the request.
+
+    :param common_name: CN for the intermediate CA.
+    :type common_name: str
+    :param csr: PEM-encoded CSR for the intermediate CA.
+    :type csr: str
+    :returns: The newly created cert and issuing ca
+    :rtype: dict
+    """
+    client = vault.get_local_client()
+    configure_pki_backend(client, CHARM_PKI_MP, ttl, max_ttl)
+    if not is_ca_ready(client, CHARM_PKI_MP, CHARM_PKI_ROLE):
+        raise vault.VaultNotReady("CA not ready")
+
+    try:
+        response = client.secrets.pki.sign_intermediate(
+            common_name=common_name,
+            csr=csr,
+            extra_params={'ttl': ttl},
+            mount_point=CHARM_PKI_MP,
+        )
+        if not response['data']:
+            raise vault.VaultError(response.get('warnings', 'unknown error'))
+    except hvac.exceptions.InvalidRequest as e:
+        raise vault.VaultInvalidRequest(str(e)) from e
+    return response['data']
+
+
 def get_csr(ttl=None, common_name=None, locality=None,
             country=None, province=None,
             organization=None, organizational_unit=None):

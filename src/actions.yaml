@@ -218,3 +218,24 @@ raft-bootstrap-node:
     from this node.  Remove all other units before running this.
     This runs the procedure documented at
     https://support.hashicorp.com/hc/en-us/articles/360050756393
+sign-intermediate:
+  description: Sign a CSR for an intermediate CA certificate agains the Vault PKI
+  properties:
+    ttl:
+      type: string
+      default: 87599h
+      description: >-
+        Specifies the Time To Live for the CA
+    common-name:
+      type: string
+      description: >-
+        CN field of the new CA
+    csr:
+      type: string
+      description: >-
+        base64 encoded CSR
+    max-ttl:
+      type: string
+      default: 87599h
+      description: >-
+        Specifies the maximum Time To Live for generated certificates.
