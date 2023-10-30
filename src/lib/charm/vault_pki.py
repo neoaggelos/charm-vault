@@ -13,6 +13,10 @@ from . import vault
 CHARM_PKI_MP = "charm-pki-local"
 CHARM_PKI_ROLE = "local"
 CHARM_PKI_ROLE_CLIENT = "local-client"
+CHARM_PKI_ROLE_MAP = {
+    "server": CHARM_PKI_ROLE,
+    "client": CHARM_PKI_ROLE_CLIENT,
+}
 
 
 def configure_pki_backend(client, name, ttl=None, max_ttl=None):
@@ -112,20 +116,13 @@ def generate_certificate(cert_type, common_name, sans, ttl, max_ttl):
     :param request: Certificate request from the tls-certificates interface.
     :type request: CertificateRequest
     :returns: The newly created cert, issuing ca and key
-    :rtype: tuple
+    :rtype: Dict
     """
     client = vault.get_local_client()
     configure_pki_backend(client, CHARM_PKI_MP, ttl, max_ttl)
     if not is_ca_ready(client, CHARM_PKI_MP, CHARM_PKI_ROLE):
         raise vault.VaultNotReady("CA not ready")
-    role = None
-    if cert_type == 'server':
-        role = CHARM_PKI_ROLE
-    elif cert_type == 'client':
-        role = CHARM_PKI_ROLE_CLIENT
-    else:
-        raise vault.VaultInvalidRequest('Unsupported cert_type: '
-                                        '{}'.format(cert_type))
+
     config = {}
     if sans:
         ip_sans, alt_names = sort_sans(sans)
@@ -134,17 +131,44 @@ def generate_certificate(cert_type, common_name, sans, ttl, max_ttl):
         if alt_names:
             config['alt_names'] = ','.join(alt_names)
     try:
-        response = client.secrets.pki.generate_certificate(
-            role,
-            common_name,
-            extra_params=config,
-            mount_point=CHARM_PKI_MP,
-        )
-        if not response['data']:
-            raise vault.VaultError(response.get('warnings', 'unknown error'))
+        if cert_type in ['server', 'client']:
+            response = client.secrets.pki.generate_certificate(
+                CHARM_PKI_ROLE_MAP[cert_type],
+                common_name,
+                extra_params=config,
+                mount_point=CHARM_PKI_MP,
+            )
+            if not response['data']:
+                raise vault.VaultError('generate_certificate failed. response '
+                                       'was: %s'.format(response))
+            return response['data']
+
+        elif cert_type == 'intermediate':
+            # NOTE(neoaggelos): Starting in Vault 1.10.x or newer, this
+            # can optionally use client.secrets.pki.generate_intermediate()
+            try:
+                private_key, csr = openssl_generate_key_and_csr(common_name)
+            except CalledProcessError as e:
+                raise vault.VaultError('failed to generate csr and key: '
+                                       'reason: {}'.format(str(e)))
+
+            response = client.secrets.pki.sign_intermediate(
+                csr=csr,
+                common_name=common_name,
+                extra_params={'ttl': ttl, **config},
+                mount_point=CHARM_PKI_MP,
+            )
+            if not response['data']:
+                raise vault.VaultError('sign_intermediate failed. response '
+                                       'was: %s'.format(response))
+
+            return {'private_key': private_key, **response['data']}
+        else:
+            raise vault.VaultInvalidRequest('Unsupported cert_type: '
+                                            '{}'.format(cert_type))
+
     except hvac.exceptions.InvalidRequest as e:
         raise vault.VaultInvalidRequest(str(e)) from e
-    return response['data']
 
 
 def get_csr(ttl=None, common_name=None, locality=None,
@@ -432,6 +456,26 @@ def is_cert_from_vault(cert, name=None):
         hookenv.log("General failure verifying cert: {}".format(str(e)),
                     level=hookenv.DEBUG)
         return False
+
+
+def openssl_generate_key_and_csr(common_name):
+    """Generate a private key and CSR for a common name.
+
+    :param common_name: the certificate common name
+    :type common_name: str
+    :returns: the private key and the certificate signing request
+    :rtype: (str, str)
+    :raises subprocess.CalledProcessError: if openssl command fails
+    """
+    private_key = check_output(['openssl', 'genrsa', '2048'])
+
+    with NamedTemporaryFile() as f:
+        f.write(private_key)
+        f.flush()
+        csr = check_output(['openssl', 'req', '-new', '-sha256', '-subj',
+                            '/CN={}'.format(common_name), '-key', f.name])
+
+    return private_key.decode(), csr.decode()
 
 
 def get_serial_number_from_cert(cert, name=None):

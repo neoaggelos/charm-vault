@@ -207,6 +207,11 @@ generate-certificate:
       default: 8760h
       description: >-
         Specifies the maximum Time To Live for generated certificates.
+    cert-type:
+      type: string
+      default: server
+      description: >-
+        Type of certificate to generate. Must be one of: server, client, intermediate
 raft-state:
   description: >-
     Get the raft cluster state.

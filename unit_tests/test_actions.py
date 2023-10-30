@@ -34,6 +34,7 @@ class TestActions(unit_tests.test_utils.CharmTestCase):
     def test_generate_cert(self, mock_vault_pki):
         self.mock_hookenv.is_leader.return_value = True
         self.mock_hookenv.action_get.return_value = {
+            'cert-type': 'server',
             'sans': 'foobar 1.2.3.4',
             'common-name': 'bazbuz',
             'ttl': '5m',
@@ -57,6 +58,7 @@ class TestActions(unit_tests.test_utils.CharmTestCase):
         """Test failure interacting with vault_pki"""
         self.mock_hookenv.is_leader.return_value = True
         self.mock_hookenv.action_get.return_value = {
+            'cert-type': 'server',
             'sans': 'foobar',
             'common-name': 'bazbuz',
             'ttl': '5m',

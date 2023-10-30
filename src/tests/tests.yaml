@@ -39,6 +39,7 @@ target_deploy_status:
 tests:
 - zaza.openstack.charm_tests.vault.tests.VaultTest
 - zaza.openstack.charm_tests.vault.tests.VaultCacheTest
+- zaza.openstack.charm_tests.vault.tests.VaultIntermediateCATest
 
 tests_options:
   force_deploy:

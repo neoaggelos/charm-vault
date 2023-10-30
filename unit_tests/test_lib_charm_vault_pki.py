@@ -115,28 +115,45 @@ class TestLibCharmVaultPKI(unit_tests.test_utils.CharmTestCase):
     @patch.object(vault_pki, 'is_ca_ready')
     @patch.object(vault_pki, 'configure_pki_backend')
     @patch.object(vault_pki.vault, 'get_local_client')
-    def test_generate_certificate(self, get_local_client,
+    @patch.object(vault_pki, 'openssl_generate_key_and_csr')
+    def test_generate_certificate(self, openssl_generate_key_and_csr,
+                                  get_local_client,
                                   configure_pki_backend,
                                   is_ca_ready,
                                   sort_sans):
         client_mock = mock.MagicMock()
         client_mock.secrets.pki.generate_certificate.return_value = {
-            'data': 'data'}
+            'data': {'private_key': 'key1', 'certificate': 'cert1'},
+        }
+        openssl_generate_key_and_csr.return_value = ('key2', 'csr')
+        client_mock.secrets.pki.sign_intermediate.return_value = {
+            'data': {'certificate': 'cert2'},
+        }
         get_local_client.return_value = client_mock
         is_ca_ready.return_value = True
         sort_sans.side_effect = lambda l: (l[0], l[1])
-        vault_pki.generate_certificate('server',
-                                       'example.com',
-                                       ([], []),
-                                       ttl='3456h', max_ttl='3456h')
-        vault_pki.generate_certificate('server',
-                                       'example.com',
-                                       (['ip1'], ['alt1']),
-                                       ttl='3456h', max_ttl='3456h')
-        vault_pki.generate_certificate('client',
-                                       'example.com',
-                                       (['ip1', 'ip2'], ['alt1', 'alt2']),
-                                       ttl='3456h', max_ttl='3456h')
+        c1 = vault_pki.generate_certificate('server',
+                                            'example.com',
+                                            ([], []),
+                                            ttl='3456h', max_ttl='3456h')
+        c2 = vault_pki.generate_certificate('server',
+                                            'example.com',
+                                            (['ip1'], ['alt1']),
+                                            ttl='3456h', max_ttl='3456h')
+        c3 = vault_pki.generate_certificate('client',
+                                            'example.com',
+                                            (['ip1', 'ip2'], ['alt1', 'alt2']),
+                                            ttl='3456h', max_ttl='3456h')
+        c4 = vault_pki.generate_certificate('intermediate',
+                                            'example.com',
+                                            (['ip1', 'ip2'], ['alt1', 'alt2']),
+                                            ttl='3456h', max_ttl='3456h')
+
+        assert c1 == {'certificate': 'cert1', 'private_key': 'key1'}
+        assert c2 == {'certificate': 'cert1', 'private_key': 'key1'}
+        assert c3 == {'certificate': 'cert1', 'private_key': 'key1'}
+        assert c4 == {'certificate': 'cert2', 'private_key': 'key2'}
+
         client_mock.secrets.pki.generate_certificate.assert_has_calls([
             mock.call(
                 vault_pki.CHARM_PKI_ROLE, 'example.com',
@@ -159,6 +176,16 @@ class TestLibCharmVaultPKI(unit_tests.test_utils.CharmTestCase):
                     'alt_names': 'alt1,alt2',
                 }
             ),
+        ])
+
+        client_mock.secrets.pki.sign_intermediate.assert_has_calls([
+            mock.call(
+                csr='csr',
+                common_name='example.com',
+                extra_params={'ttl': '3456h', 'ip_sans': 'ip1,ip2',
+                              'alt_names': 'alt1,alt2'},
+                mount_point=vault_pki.CHARM_PKI_MP,
+            )
         ])
 
     @patch.object(vault_pki, 'is_ca_ready')
@@ -201,6 +228,13 @@ class TestLibCharmVaultPKI(unit_tests.test_utils.CharmTestCase):
         )
         with self.assertRaises(vault_pki.vault.VaultInvalidRequest):
             vault_pki.generate_certificate('server', 'example.com', [],
+                                           ttl='3456h', max_ttl='3456h')
+
+        client_mock.secrets.pki.sign_intermediate.side_effect = (
+            hvac.exceptions.InvalidRequest
+        )
+        with self.assertRaises(vault_pki.vault.VaultInvalidRequest):
+            vault_pki.generate_certificate('intermediate', 'example.com', [],
                                            ttl='3456h', max_ttl='3456h')
 
     @patch.object(vault_pki, 'configure_pki_backend')
@@ -610,6 +644,39 @@ class TestLibCharmVaultPKI(unit_tests.test_utils.CharmTestCase):
         mock_log.assert_called_once_with(
             "General failure verifying cert: on noes",
             level=vault_pki.hookenv.DEBUG)
+
+    @patch.object(vault_pki, 'check_output')
+    @patch.object(vault_pki, 'NamedTemporaryFile')
+    def test_openssl_generate_key_and_csr(
+        self,
+        mock_named_temporary_file,
+        mock_check_output,
+    ):
+        mock_check_output.side_effect = (b'key', b'csr')
+
+        mock_f = MagicMock()
+        mock_f.name = "filename"
+        mock_named_temporary_file.return_value.__enter__.return_value = mock_f
+
+        assert vault_pki.openssl_generate_key_and_csr("name") == ("key", "csr")
+
+        assert mock_check_output.mock_calls == [
+            mock.call(["openssl", "genrsa", "2048"]),
+            mock.call(["openssl", "req", "-new", "-sha256",
+                       "-subj", "/CN=name", "-key", "filename"])
+        ]
+
+    @patch.object(vault_pki, 'check_output')
+    def test_openssl_generate_key_and_csr_subprocess_error(self,
+                                                           mock_check_output):
+
+        def _raise(*args, **kwargs):
+            raise vault_pki.CalledProcessError(cmd="bang", returncode=1)
+
+        mock_check_output.side_effect = _raise
+
+        with self.assertRaises(vault_pki.CalledProcessError):
+            vault_pki.openssl_generate_key_and_csr("test")
 
     @patch.object(vault_pki, 'check_output')
     @patch.object(vault_pki, 'NamedTemporaryFile')

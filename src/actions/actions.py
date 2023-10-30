@@ -291,7 +291,7 @@ def generate_cert(*args):
     sans_list = action_config.get('sans')
     try:
         new_crt = vault_pki.generate_certificate(
-            cert_type='server',
+            cert_type=action_config.get('cert-type'),
             common_name=action_config.get('common-name'),
             sans=list(sans_list.split()),
             ttl=action_config.get('ttl'),
